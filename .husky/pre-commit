@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+# Shift-left : controles avant chaque commit
+npx lint-staged || exit 1
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact -v || exit 1
+else
+  echo "ATTENTION : gitleaks n'est pas installe, scan de secrets local ignore (la CI le fera)."
+fi

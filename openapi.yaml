@@ -1,0 +1,402 @@
+openapi: 3.0.3
+info:
+  title: CoWork API
+  version: 1.0.0
+  description: >
+    Contrat d'API de CoWork (reservation d'espaces de travail avec QR d'acces).
+    Reference commune pour le web (A), le mobile (D) et les tests. Tout changement
+    passe par une pull request relue par les consommateurs.
+servers:
+  - url: http://localhost:3000
+    description: Developpement local
+tags:
+  - name: Auth
+    description: Responsable A
+  - name: Spaces
+  - name: Bookings
+  - name: Payments
+    description: Responsable A
+  - name: QR
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      tags: [Spaces]
+      summary: Sonde de sante
+      security: []
+      responses:
+        "200":
+          description: Service operationnel
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Creer un compte
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: Compte cree
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Se connecter
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Jetons emis
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Renouveler les jetons (le jeton de rafraichissement est a usage unique)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        "200":
+          description: Nouveaux jetons
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /spaces:
+    get:
+      tags: [Spaces]
+      summary: Lister les espaces
+      responses:
+        "200":
+          description: Liste des espaces
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Space" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /spaces/{spaceId}/availability:
+    get:
+      tags: [Spaces]
+      summary: Creneaux disponibles d'un espace pour un jour donne
+      parameters:
+        - { $ref: "#/components/parameters/SpaceId" }
+        - name: date
+          in: query
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Creneaux d'une heure
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Slot" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /bookings:
+    get:
+      tags: [Bookings]
+      summary: Historique des reservations de l'utilisateur connecte
+      responses:
+        "200":
+          description: Reservations de l'utilisateur uniquement
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Booking" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Bookings]
+      summary: Creer une reservation (statut pending, prix calcule par le serveur)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateBookingRequest" }
+      responses:
+        "201":
+          description: Reservation creee, en attente de paiement
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Booking" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Creneau deja reserve
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /bookings/{bookingId}:
+    get:
+      tags: [Bookings]
+      summary: Lire une reservation (proprietaire uniquement)
+      parameters:
+        - { $ref: "#/components/parameters/BookingId" }
+      responses:
+        "200":
+          description: Reservation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Booking" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /bookings/{bookingId}/payment:
+    post:
+      tags: [Payments]
+      summary: Payer une reservation (Stripe en mode test ou paiement simule)
+      description: Le montant n'est jamais lu dans la requete. La cle d'idempotence evite un double debit en cas de rejeu.
+      parameters:
+        - { $ref: "#/components/parameters/BookingId" }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      responses:
+        "200":
+          description: Paiement traite
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Payment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Reservation deja payee ou annulee
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /payments/webhook:
+    post:
+      tags: [Payments]
+      summary: Webhook du fournisseur de paiement (signature verifiee)
+      security: []
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { description: Evenement accepte }
+        "400": { $ref: "#/components/responses/ValidationError" }
+  /bookings/{bookingId}/qr:
+    get:
+      tags: [QR]
+      summary: Obtenir le QR code d'acces (uniquement si le paiement est confirme)
+      parameters:
+        - { $ref: "#/components/parameters/BookingId" }
+      responses:
+        "200":
+          description: Jeton signe a afficher sous forme de QR code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QrToken" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Paiement non confirme
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /qr/verify:
+    post:
+      tags: [QR]
+      summary: Verifier un QR code a l'entree (role gestionnaire)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "200":
+          description: Resultat de la verification
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QrVerification" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    SpaceId:
+      name: spaceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    BookingId:
+      name: bookingId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: validation_error }
+            message: { type: string }
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12, maxLength: 128 }
+        name: { type: string, maxLength: 100 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        role: { type: string, enum: [user, manager] }
+    TokenPair:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresIn: { type: integer, description: Duree de vie du jeton d'acces en secondes }
+    Space:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string, enum: [desk, meeting_room] }
+        capacity: { type: integer }
+        hourlyRateCents: { type: integer, example: 5000 }
+        currency: { type: string, example: MAD }
+    Slot:
+      type: object
+      properties:
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        available: { type: boolean }
+    CreateBookingRequest:
+      description: Aucun champ de prix. Le prix est calcule par le serveur.
+      type: object
+      additionalProperties: false
+      required: [spaceId, startsAt, endsAt]
+      properties:
+        spaceId: { type: string, format: uuid }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+    Booking:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        spaceId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        priceCents: { type: integer }
+        currency: { type: string }
+        status: { type: string, enum: [pending, paid, cancelled] }
+    Payment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        bookingId: { type: string, format: uuid }
+        amountCents: { type: integer }
+        status: { type: string, enum: [succeeded, failed] }
+    QrToken:
+      type: object
+      properties:
+        token: { type: string, description: Jeton signe (HMAC) a encoder en QR code }
+        validFrom: { type: string, format: date-time }
+        validUntil: { type: string, format: date-time }
+    QrVerification:
+      type: object
+      properties:
+        valid: { type: boolean }
+        reason:
+          type: string
+          enum: [malformed, bad_signature, not_yet_valid, expired, already_used]
+        bookingId: { type: string, format: uuid }
+  responses:
+    ValidationError:
+      description: Requete invalide
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Non authentifie
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Acces refuse (ressource d'un autre utilisateur ou role insuffisant)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Ressource introuvable
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Conflit
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooManyRequests:
+      description: Trop de requetes
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

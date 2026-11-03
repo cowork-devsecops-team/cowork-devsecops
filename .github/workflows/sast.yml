@@ -1,0 +1,37 @@
+# SAST (pratique Tier 1 n.6). NON TESTE localement : verifier au premier run.
+name: SAST
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    name: sast-semgrep
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Semgrep (regles Node et Express)
+        run: semgrep scan --config p/nodejs --config p/expressjs --config p/security-audit --error --sarif --output semgrep.sarif .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-sarif
+          path: semgrep.sarif
+
+  codeql:
+    name: sast-codeql
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v3
